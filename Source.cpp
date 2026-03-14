@@ -73,8 +73,8 @@ GLfloat			y = 0.00f;
 GLfloat			lineY = 0.00f;
 GLfloat			lineDisp = 0.02f;
 GLfloat			increment = 0.01f;
-GLfloat			vx = increment * cos(radians(35.0));
-GLfloat			vy = increment * sin(radians(35.0));
+GLfloat			vx = increment * cos(35.0 * PI / 180.0);
+GLfloat			vy = increment * sin(35.0 * PI / 180.0);
 
 eAnimationType	animationType = None;
 
@@ -203,25 +203,20 @@ void keyCallback(GLFWwindow* window, int key, int scancode, int action, int mods
 	// diagonal movement
 	if (key == GLFW_KEY_S && action == GLFW_PRESS) { 
 		animationType = Diagonal;
-		//x = x;
-		//y = y;
 	}
 	// vertical movement
 	if (key == GLFW_KEY_V && action == GLFW_PRESS) { 
 		animationType = Vertical;
-		//x = x;
-		//y = y;
 	}
 	// horizontal movement
 	if (key == GLFW_KEY_H && action == GLFW_PRESS) { 
 		animationType = Horizontal;
-		//x = x;
-		//y = y;
 	}
-	// stop movement at
+	// stop movement
 	if (key == GLFW_KEY_Q && action == GLFW_PRESS) {
 		animationType = None;
 	}
+	// reset line position
 	if (key == GLFW_KEY_R && action == GLFW_PRESS) lineY = 0.0;
 }
 
@@ -277,6 +272,7 @@ void initShaderProgram() {
 	glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(GLfloat), (GLvoid*)0);
 	glEnableVertexAttribArray(1);
 
+	// get uniform variables from shaders
 	XoffsetLocation = glGetUniformLocation(program[QuadScreenProgram], "offsetX");
 	YoffsetLocation = glGetUniformLocation(program[QuadScreenProgram], "offsetY");
 	swapLocation = glGetUniformLocation(program[QuadScreenProgram], "swapColors");
@@ -314,9 +310,14 @@ void display(GLFWwindow* window, double currentTime) {
 			glProgramUniform1f(program[QuadScreenProgram], YoffsetLocation, y);
 			break;
 	}
-	bool intersect = abs(y - lineY) <= radius &&
-		(x + radius >= -0.25f && x - radius <= 0.25f);
+	// detect intersection between circle and line
+	float circleTop = y + radius;
+	float circleBottom = y - radius;
 
+	bool intersect =
+		(circleBottom <= lineY && circleTop >= lineY) &&
+		(x + radius >= -0.25f && x - radius <= 0.25f);
+	// swap colors when intersection detected
 	glUniform1i(swapLocation, intersect);
 	
 	glDrawArrays(GL_TRIANGLE_FAN, 0, (segments + 2));
@@ -324,6 +325,7 @@ void display(GLFWwindow* window, double currentTime) {
 	matModelView = matView * matModel;
 	glUniformMatrix4fv(locationMatModelView, 1, GL_FALSE, value_ptr(matModelView));
 
+	// line movement
 	if (keyboard[GLFW_KEY_UP] && lineY < 0.99f)lineY += lineDisp;
 
 	if (keyboard[GLFW_KEY_DOWN] && lineY > -0.99) lineY -= lineDisp;
@@ -336,10 +338,11 @@ void display(GLFWwindow* window, double currentTime) {
 
 int main(void){
 	init(3, 3);
-
+	// first vertex pair is for the center
     vertices[0] = vec2(0.0, 0.0);
 	colors[0] = vec3(1.0, 0.0, 0.0);
 
+	// get coordinates that make up the circle
     for (int i = 0; i <= segments; i++) {
         GLfloat angle = 2.0 * PI * i / segments;
         GLfloat x = radius * cos(angle);
@@ -348,6 +351,7 @@ int main(void){
 		colors[i + 1] = vec3(0.0, 1.0, 0.0);
     }
 	
+	// line information
 	GLint lineStart = segments + 2;
 	vertices[lineStart] = vec2(-0.25f, 0.0f);
 	colors[lineStart] = vec3(0.0, 0.0, 1.0);
