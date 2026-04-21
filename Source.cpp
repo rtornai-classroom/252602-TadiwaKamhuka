@@ -1,176 +1,104 @@
-// vertex array
 enum eVertexArrayObject {
-	VAOVerticesData,
+	VAOCurveData,
 	VAOCount
 };
-//buffer for vertices and colors
-enum eBufferObject {
-	VBOVerticesData,
-	VBOColorData,
+enum eVertexBufferObject {
+	VBOBezierData,
 	BOCount
 };
 enum eProgram {
+	CurveTesselationProgram,
 	QuadScreenProgram,
 	ProgramCount
 };
-// types of animations
-enum eAnimationType {
-	Vertical,
-	Horizontal,
-	Diagonal,
-	None
+enum eTexture {
+	NoTexture,
+	TextureCount
 };
 
-#include <array>
-#include <fstream>
-#include <GL/glew.h>
-#include <GLFW/glfw3.h>
-#include <glm/gtc/matrix_inverse.hpp>
-#include <glm/gtc/type_ptr.hpp>
-#include <iostream>
-#include <sstream>
-#define PI 3.14159265358979323846   // pi
+#include "common.cpp"
 
-using namespace	std;
-using namespace glm;
-
-const GLchar* windowTitle = "Task 1";
-
-typedef struct {
-	GLenum       type;
-	const GLchar* fileName;
-	GLuint       shader;
-} ShaderInfo;
-
-// initial values for enum counts
-GLuint			VAO[VAOCount] = { 0 };
-GLuint			BO[BOCount] = { 0 };
-GLuint			program[ProgramCount] = { 0 };
-
-// window meta info
-GLint windowWidth = 700;
-GLint windowHeight = 700;
-GLboolean keyboard[512] = { GL_FALSE };
-GLFWwindow* window = nullptr;
-
-// swapColor uniform in fragShader location
-GLuint swapLocation;
-
-GLuint			locationMatProjection, locationMatModelView;
-mat4			matModel, matView, matProjection, matModelView;
-
-// circle information
-const GLint segments = 100;
-array<vec2, (segments + 4)> vertices;
-array<vec3, (segments + 4)> colors;
-GLfloat radius = 0.25;
-
-// information for animation
-GLuint			XoffsetLocation;
-GLuint			YoffsetLocation;
-GLfloat			x = 0.00f;
-GLfloat			y = 0.00f;
-GLfloat			lineY = 0.00f;
-GLfloat			lineDisp = 0.02f;
-GLfloat			increment = 0.01f;
-GLfloat			vx = increment * cos(35.0 * PI / 180.0);
-GLfloat			vy = increment * sin(35.0 * PI / 180.0);
-
-eAnimationType	animationType = None;
+#define	BEZIER_GMT			1
+#define MAX_CONTROL_POINTS 16
 
 
+GLchar	windowTitle[] = "Task 2 - Q9X9KP";
+GLfloat	bezier_control_points[MAX_CONTROL_POINTS][3] = {
+	{ -0.5f, -0.5f, 0.0f }, { -0.5f,  0.5f, 0.0f },
+	{  0.5f,  0.5f, 0.0f }, {  0.5f, -0.5f, 0.0f }
+};
 
-void cleanUpScene(int returnCode) {
-    glDeleteVertexArrays(VAOCount, VAO);
-    glDeleteBuffers(BOCount, BO);
-    for (int enumItem = 0; enumItem < ProgramCount; enumItem++)
-		glDeleteProgram(program[enumItem]);
-    glfwTerminate();
-    exit(returnCode);
+GLuint			locationTessMatProjection, locationTessMatModelView, locationCurveType, locationControlPointsNumber;
+GLuint			curveType = BEZIER_GMT, controlPointsNumber = 4;
+
+GLuint			locationColor;
+GLint			selectedPoint = -1;
+GLboolean		dragging = false;
+
+glm::vec2 screenToWorld(GLFWwindow* window, double x, double y) {
+	float nx = (float)x / windowWidth * 2.0f - 1.0f;
+	float ny = 1.0f - (float)y / windowHeight * 2.0f;
+
+	glm::vec4 clip(nx, ny, 0, 1);
+
+	glm::mat4 inv = glm::inverse(matProjection * matModelView);
+	glm::vec4 world = inv * clip;
+
+	return glm::vec2(world.x, world.y);
 }
 
-GLboolean checkOpenGLError() {
-	GLboolean	foundError = GL_FALSE;
-	GLenum		glErr;
-	while ((glErr = glGetError()) != GL_NO_ERROR) {
-		cerr << "glError: " << gluErrorString(glErr) << endl;
-		foundError = GL_TRUE;
-	}
-	return foundError;
+void updateVBO() {
+	glBindBuffer(GL_ARRAY_BUFFER, BO[VBOBezierData]);
+	glBufferData(GL_ARRAY_BUFFER, sizeof(GLfloat) * 3 * MAX_CONTROL_POINTS, bezier_control_points, GL_DYNAMIC_DRAW);
 }
 
-GLvoid checkShaderLog(GLuint shader) {
-	GLint	compiled;
-	GLint	length = 0;
-	glGetShaderiv(shader, GL_COMPILE_STATUS, &compiled);
-	if (compiled) return;
-	glGetShaderiv(shader, GL_INFO_LOG_LENGTH, &length);
-	if (length > 0) {
-		GLchar* log = (GLchar*)calloc((size_t)length + 1, sizeof(GLchar));
-		glGetShaderInfoLog(shader, length, nullptr, log);
-		cerr << "Shader compiling failed, info log: " << log << endl;
-		free(log);
-	}
-	cleanUpScene(EXIT_FAILURE);
+void initTesselationShader() {
+	ShaderInfo shader_info[] = {
+		{ GL_FRAGMENT_SHADER,			"./CurveFragShader.glsl" },
+		{ GL_TESS_CONTROL_SHADER,		"./CurveTessContShader.glsl" },
+		{ GL_TESS_EVALUATION_SHADER,	"./CurveTessEvalShader.glsl" },
+		{ GL_VERTEX_SHADER,				"./CurveVertShader.glsl" },
+		{ GL_NONE,						nullptr }
+	};
+
+	ShaderInfo point_shader_info[] = {
+		{ GL_VERTEX_SHADER,   "./QuadScreenVertShader.glsl" },
+		{ GL_FRAGMENT_SHADER, "./QuadScreenFragShader.glsl" },
+		{ GL_NONE, nullptr }
+	};
+	program[CurveTesselationProgram] = LoadShaders(shader_info);
+	program[QuadScreenProgram] = LoadShaders(point_shader_info);
+	glBindVertexArray(VAO[VAOCurveData]);
+	glBindBuffer(GL_ARRAY_BUFFER, BO[VBOBezierData]);
+	glBufferData(GL_ARRAY_BUFFER, sizeof(bezier_control_points), bezier_control_points, GL_DYNAMIC_DRAW);
+	glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 0, 0);
+	glEnableVertexAttribArray(0);
+	locationCurveType = glGetUniformLocation(program[CurveTesselationProgram], "curveType");
+	locationControlPointsNumber = glGetUniformLocation(program[CurveTesselationProgram], "controlPointsNumber");
+	locationTessMatProjection = glGetUniformLocation(program[CurveTesselationProgram], "matProjection");
+	locationTessMatModelView = glGetUniformLocation(program[CurveTesselationProgram], "matModelView");
+	locationColor = glGetUniformLocation(program[QuadScreenProgram], "uColor");
+	glUseProgram(program[CurveTesselationProgram]);
+	glUniform1i(locationCurveType, curveType);
+	glUniform1i(locationControlPointsNumber, controlPointsNumber);
 }
 
-GLvoid checkProgramLog(GLint prog, ShaderInfo* shaders) {
-	GLint	linked;
-	GLint	length = 0;
-	glGetProgramiv(prog, GL_LINK_STATUS, &linked);
-	if (linked) return;
-	for (ShaderInfo* entry = shaders; entry->type != GL_NONE; ++entry) {
-		glDeleteShader(entry->shader);
-		entry->shader = 0;
-	}
-	glGetProgramiv(prog, GL_INFO_LOG_LENGTH, &length);
-	if (length > 0) {
-		GLchar* log = (GLchar*)calloc((size_t)length + 1, sizeof(GLchar));
-		glGetProgramInfoLog(prog, length, nullptr, log);
-		cerr << "Shader linking failed, info log: " << log << endl;
-		free(log);
-	}
-	cleanUpScene(EXIT_FAILURE);
-}
+void display(GLFWwindow* window, double currentTime) {
+	glClear(GL_COLOR_BUFFER_BIT);
+	glBindVertexArray(VAO[VAOCurveData]);
+	glUseProgram(program[CurveTesselationProgram]);
+	glUniform1i(locationControlPointsNumber, controlPointsNumber);
+	glPatchParameteri(GL_PATCH_VERTICES, controlPointsNumber);
+	glDrawArrays(GL_PATCHES, 0, controlPointsNumber);
 
-string ReadShader(const GLchar* filename) {
-	ifstream		t(filename);
-	stringstream	buffer;
-	if (t.fail()) cleanUpScene(EXIT_FAILURE);
-	buffer << t.rdbuf();
-	return buffer.str();
-}
 
-GLuint LoadShaders(ShaderInfo* shaders) {
-	if (shaders == nullptr) return 0;
-	GLuint		program = glCreateProgram();
-	ShaderInfo* entry = shaders;
-	while (entry->type != GL_NONE) {
-		GLuint			shader = glCreateShader(entry->type);
-		string			sourceString = ReadShader(entry->fileName);
-		const GLchar* source = sourceString.c_str();
+	glUseProgram(program[QuadScreenProgram]);
 
-		entry->shader = shader;
-		if (source == nullptr) {
-			for (entry = shaders; entry->type != GL_NONE; ++entry) {
-				glDeleteShader(entry->shader);
-				entry->shader = 0;
-			}
-			cleanUpScene(EXIT_FAILURE);
-		}
-		glShaderSource(shader, 1, &source, nullptr);
-		glCompileShader(shader);
-		checkShaderLog(shader);
-		glAttachShader(program, shader);
-		++entry;
-	}
-	glLinkProgram(program);
-	checkProgramLog(program, shaders);
-	for (entry = shaders; entry->type != GL_NONE; ++entry) {
-		glDeleteShader(entry->shader);
-		entry->shader = 0;
-	}
-	return program;
+	glUniform4f(locationColor, 0.0f, 0.0f, 1.0f, 1.0f);
+	glDrawArrays(GL_LINE_STRIP, 0, controlPointsNumber);
+
+	glUniform4f(locationColor, 1.0f, 0.0f, 0.0f, 1.0f);
+	glDrawArrays(GL_POINTS, 0, controlPointsNumber);
 }
 
 void framebufferSizeCallback(GLFWwindow* window, int width, int height) {
@@ -179,204 +107,128 @@ void framebufferSizeCallback(GLFWwindow* window, int width, int height) {
 
 	float aspectRatio = (float)windowWidth / (float)windowHeight;
 	glViewport(0, 0, windowWidth, windowHeight);
+	if (windowWidth < windowHeight)
+		matProjection = ortho(-worldSize, worldSize, -worldSize / aspectRatio, worldSize / aspectRatio, -100.0, 100.0);
+	else
+		matProjection = ortho(-worldSize * aspectRatio, worldSize * aspectRatio, -worldSize, worldSize, -100.0, 100.0);
 
 	matModel = mat4(1.0);
 	matView = lookAt(
-		vec3(0.0f, 0.0f, 9.0f),	
-		vec3(0.0f, 0.0f, 0.0f),	
+		vec3(0.0f, 0.0f, 9.0f),		
+		vec3(0.0f, 0.0f, 0.0f),		
 		vec3(0.0f, 1.0f, 0.0f));	
 	matModelView = matView * matModel;
-	glUniformMatrix4fv(locationMatModelView, 1, GL_FALSE, value_ptr(matModelView));
-	glUniformMatrix4fv(locationMatProjection, 1, GL_FALSE, value_ptr(matProjection));
+	glUseProgram(program[CurveTesselationProgram]);
+	glUniformMatrix4fv(locationTessMatModelView, 1, GL_FALSE, glm::value_ptr(matModelView));
+	glUniformMatrix4fv(locationTessMatProjection, 1, GL_FALSE, glm::value_ptr(matProjection));
 }
 
 void keyCallback(GLFWwindow* window, int key, int scancode, int action, int mods) {
-	if ((action == GLFW_PRESS) && (key == GLFW_KEY_ESCAPE))
-		glfwSetWindowShouldClose(window, GLFW_TRUE);
 
-	if (action == GLFW_PRESS)
-		keyboard[key] = GL_TRUE;
-	else if (action == GLFW_RELEASE)
-		keyboard[key] = GL_FALSE;
-
-	// keep final position and move circle from that position
-	// diagonal movement
-	if (key == GLFW_KEY_S && action == GLFW_PRESS) { 
-		animationType = Diagonal;
-	}
-	// vertical movement
-	if (key == GLFW_KEY_V && action == GLFW_PRESS) { 
-		animationType = Vertical;
-	}
-	// horizontal movement
-	if (key == GLFW_KEY_H && action == GLFW_PRESS) { 
-		animationType = Horizontal;
-	}
-	// stop movement
-	if (key == GLFW_KEY_Q && action == GLFW_PRESS) {
-		animationType = None;
-	}
-	// reset line position
-	if (key == GLFW_KEY_R && action == GLFW_PRESS) lineY = 0.0;
 }
 
-void init(GLint major, GLint minor) {
-	if (!glfwInit()) cleanUpScene(EXIT_FAILURE);
-	glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, major);
-	glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, minor);
+void cursorPosCallback(GLFWwindow* window, double xPos, double yPos) {
 
-	if ((window = glfwCreateWindow(windowWidth, windowHeight, windowTitle, nullptr, nullptr)) == nullptr) {
-		cerr << "Failed to create GLFW window." << endl;
-		cleanUpScene(EXIT_FAILURE);
-	}
+	if (!dragging || selectedPoint == -1)
+		return;
 
-	glfwMakeContextCurrent(window);
-	glfwSetFramebufferSizeCallback(window, framebufferSizeCallback);
-	glfwSetKeyCallback(window, keyCallback);
+	glm::vec2 world = screenToWorld(window, xPos, yPos);
 
-	if (glewInit() != GLEW_OK) {
-		cerr << "Failed to init the GLEW system." << endl;
-		cleanUpScene(EXIT_FAILURE);
-	}
-	glfwSwapInterval(1);
-	GLFWmonitor* monitor = glfwGetPrimaryMonitor();
-	const GLFWvidmode* mode = glfwGetVideoMode(monitor);
-	glfwSetWindowPos(window, (mode->width - windowWidth) / 2, (mode->height - windowHeight) / 2);
-	glGenBuffers(BOCount, BO);
-	glGenVertexArrays(VAOCount, VAO);
-	glEnable(GL_POINT_SMOOTH);
-	glEnable(GL_LINE_SMOOTH);
-	glLineWidth(8.0);
-	glClearColor(1.0f, 1.0f, 0.0f, 1.0f);
-	cout.precision(2);
-	cout << fixed;
+	bezier_control_points[selectedPoint][0] = world.x;
+	bezier_control_points[selectedPoint][1] = world.y;
+
+	updateVBO();
 }
 
-void initShaderProgram() {
-	ShaderInfo shader_info[] = {
-		{ GL_FRAGMENT_SHADER,	"src/fragmentShader.glsl" },
-		{ GL_VERTEX_SHADER,		"src/vertexShader.glsl" },
-		{ GL_NONE,				nullptr }
-	};
-	
-	program[QuadScreenProgram] = LoadShaders(shader_info);
-	glBindVertexArray(VAO[VAOVerticesData]);
-	//////////////////// Position Buffer /////////////////////
-	glBindBuffer(GL_ARRAY_BUFFER, BO[VBOVerticesData]);
-	glBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices.data(), GL_STATIC_DRAW);
-	glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 2 * sizeof(GLfloat), (GLvoid*)0);
-	glEnableVertexAttribArray(0);
-	//////////////////// Color Buffer /////////////////////
-	glBindBuffer(GL_ARRAY_BUFFER, BO[VBOColorData]);
-	glBufferData(GL_ARRAY_BUFFER, sizeof(colors), colors.data(), GL_STATIC_DRAW);
-	glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(GLfloat), (GLvoid*)0);
-	glEnableVertexAttribArray(1);
+void mouseButtonCallback(GLFWwindow* window, int button, int action, int mods) {
+	double x, y;
+	glfwGetCursorPos(window, &x, &y);
+	glm::vec2 world = screenToWorld(window, x, y);
 
-	// get uniform variables from shaders
-	XoffsetLocation = glGetUniformLocation(program[QuadScreenProgram], "offsetX");
-	YoffsetLocation = glGetUniformLocation(program[QuadScreenProgram], "offsetY");
-	swapLocation = glGetUniformLocation(program[QuadScreenProgram], "swapColors");
-
-	glUseProgram(program[QuadScreenProgram]);
-}
-
-void display(GLFWwindow* window, double currentTime) {
-    glClear(GL_COLOR_BUFFER_BIT);
-
-	matModel = mat4(1.0);
-	switch (animationType) {
-		case None:
-			glProgramUniform1f(program[QuadScreenProgram], XoffsetLocation, x);
-			glProgramUniform1f(program[QuadScreenProgram], YoffsetLocation, y);
-			break;
-		case Horizontal:
-			x += vx;
-			if ((x + radius > 1.0) || (x - radius < -1.0)) vx = -vx;
-			glProgramUniform1f(program[QuadScreenProgram], XoffsetLocation, x);
-			glProgramUniform1f(program[QuadScreenProgram], YoffsetLocation, y);
-			break;
-		case Vertical:
-			y += vy;
-			if ((y + radius > 1.0) || (y - radius < -1.0)) vy = -vy;
-			glProgramUniform1f(program[QuadScreenProgram], XoffsetLocation, x);
-			glProgramUniform1f(program[QuadScreenProgram], YoffsetLocation, y);
-			break;
-		case Diagonal:
-			x += vx;
-			y += vy;
-			if ((x + radius > 1.0) || (x - radius < -1.0)) vx = -vx;
-			if ((y + radius > 1.0) || (y - radius < -1.0)) vy = -vy;
-			glProgramUniform1f(program[QuadScreenProgram], XoffsetLocation, x);
-			glProgramUniform1f(program[QuadScreenProgram], YoffsetLocation, y);
-			break;
+	if (button == GLFW_MOUSE_BUTTON_LEFT && action == GLFW_RELEASE) {
+		dragging = false;
+		selectedPoint = -1;
+		return;
 	}
-	// detect intersection between circle and line
-	float circleTop = y + radius;
-	float circleBottom = y - radius;
 
-	bool intersect =
-		(circleBottom <= lineY && circleTop >= lineY) &&
-		(x + radius >= -0.25f && x - radius <= 0.25f);
-	// swap colors when intersection detected
-	glUniform1i(swapLocation, intersect);
-	
-	glDrawArrays(GL_TRIANGLE_FAN, 0, (segments + 2));
+	if (action != GLFW_PRESS) return;
 
-	matModelView = matView * matModel;
-	glUniformMatrix4fv(locationMatModelView, 1, GL_FALSE, value_ptr(matModelView));
 
-	// line movement
-	if (keyboard[GLFW_KEY_UP] && lineY < 0.99f)lineY += lineDisp;
+	if (button == GLFW_MOUSE_BUTTON_LEFT) {
 
-	if (keyboard[GLFW_KEY_DOWN] && lineY > -0.99) lineY -= lineDisp;
+		selectedPoint = -1;
 
-	glProgramUniform1f(program[QuadScreenProgram], XoffsetLocation, 0.0f);
-	glProgramUniform1f(program[QuadScreenProgram], YoffsetLocation, lineY);
+		for (int i = 0; i < controlPointsNumber; i++) {
+			float dx = world.x - bezier_control_points[i][0];
+			float dy = world.y - bezier_control_points[i][1];
 
-	glDrawArrays(GL_LINES, (segments + 2), 2);
+			if (sqrt(dx * dx + dy * dy) < 0.1f) {
+				selectedPoint = i;
+				dragging = true;
+				return;
+			}
+		}
+
+		if (controlPointsNumber < MAX_CONTROL_POINTS) {
+			bezier_control_points[controlPointsNumber][0] = world.x;
+			bezier_control_points[controlPointsNumber][1] = world.y;
+			bezier_control_points[controlPointsNumber][2] = 0.0f;
+
+			controlPointsNumber++;
+
+			updateVBO();
+		}
+	}
+	if (button == GLFW_MOUSE_BUTTON_LEFT && action == GLFW_RELEASE) {
+		dragging = false;
+		selectedPoint = -1;
+	}
+
+	if (button == GLFW_MOUSE_BUTTON_RIGHT) {
+
+		int closest = -1;
+		float bestDist = 999999.0f;
+
+		for (int i = 0; i < controlPointsNumber; i++) {
+			float dx = world.x - bezier_control_points[i][0];
+			float dy = world.y - bezier_control_points[i][1];
+			float d = dx * dx + dy * dy;
+
+			if (d < bestDist) {
+				bestDist = d;
+				closest = i;
+			}
+		}
+
+		if (closest != -1 && controlPointsNumber > 4) {
+
+			for (int i = closest; i < controlPointsNumber - 1; i++) {
+				bezier_control_points[i][0] = bezier_control_points[i + 1][0];
+				bezier_control_points[i][1] = bezier_control_points[i + 1][1];
+				bezier_control_points[i][2] = bezier_control_points[i + 1][2];
+			}
+
+			controlPointsNumber--;
+			updateVBO();
+		}
+	}
+
+
 }
 
-int main(void){
-	init(3, 3);
-	// first vertex pair is for the center
-    vertices[0] = vec2(0.0, 0.0);
-	colors[0] = vec3(1.0, 0.0, 0.0);
-
-	// get coordinates that make up the circle
-    for (int i = 0; i <= segments; i++) {
-        GLfloat angle = 2.0 * PI * i / segments;
-        GLfloat x = radius * cos(angle);
-        GLfloat y = radius * sin(angle);
-        vertices[i + 1] = vec2(x, y);
-		colors[i + 1] = vec3(0.0, 1.0, 0.0);
-    }
-	
-	// line information
-	GLint lineStart = segments + 2;
-	vertices[lineStart] = vec2(-0.25f, 0.0f);
-	colors[lineStart] = vec3(0.0, 0.0, 1.0);
-	vertices[lineStart + 1] = vec2(0.25f, 0.0f);
-	colors[lineStart + 1] = vec3(0.0, 0.0, 1.0);
-
-	initShaderProgram();
-
-	cout << "Keyboard control" << endl;
-	cout << "ESC\t\texit" << endl;
-	cout << "H\t\tFor horizontal circle movement" << endl;
-	cout << "Q\t\tTo stop movement and return circle to center" << endl;
-	cout << "R\t\tReset line position to middle of screen" << endl;
-	cout << "S\t\tStart circle's 35 degree movement (from center)" << endl;
-	cout << "V\t\tFor vertical circle movement" << endl;
-	cout << "Up Arrow\tFor moving line up" << endl;
-	cout << "Down Arrow\tFor moving line down" << endl;
-
-    while (!glfwWindowShouldClose(window))
-    {
+int main(void) {
+	init(4, 0, GLFW_OPENGL_COMPAT_PROFILE); 
+	initTesselationShader();
+	setlocale(LC_ALL, "");
+	cout << "Mouse control" << endl;
+	cout << "Left click\tincrease control point number" << endl;
+	cout << "Right click\tdecrease control point number" << endl << endl;
+	framebufferSizeCallback(window, windowWidth, windowHeight);
+	while (!glfwWindowShouldClose(window)) {
 		display(window, glfwGetTime());
-        glfwSwapBuffers(window);
-        glfwPollEvents();
-    }
-
+		glfwSwapBuffers(window);
+		glfwPollEvents();
+	}
 	cleanUpScene(EXIT_SUCCESS);
-    return EXIT_SUCCESS;
+	return EXIT_SUCCESS;
 }
