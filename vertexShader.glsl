@@ -1,14 +1,19 @@
 #version 330
 
-layout (location = 0) in vec2 aPosition;
-layout (location = 1) in vec3 aColor;
+layout (location = 0) in vec3 aPosition;
 
-uniform float offsetX;
-uniform float offsetY;
+uniform mat4 matModel;
+uniform mat4 matView;
+uniform mat4 matProjection;
 
-out vec3 vColor;
+out vec3 FragPos;
+out vec3 Normal;
 
-void main(){
-    gl_Position = vec4(aPosition + vec2(offsetX, offsetY), 0.0, 1.0);
-    vColor = aColor;
+void main(void) {
+    vec4 worldPos = matModel * vec4(aPosition, 1.0);
+    FragPos = worldPos.xyz;
+
+    Normal = normalize(aPosition);
+
+    gl_Position = matProjection * matView * worldPos;
 }
